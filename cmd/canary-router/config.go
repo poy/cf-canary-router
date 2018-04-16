@@ -22,6 +22,8 @@ type Config struct {
 
 	Query string `env:"QUERY, required"`
 	Plan  Plan   `env:"PLAN, required"`
+
+	SkipSSLValidation bool `env:"SKIP_SSL_VALIDATION"`
 }
 
 func loadConfig() Config {

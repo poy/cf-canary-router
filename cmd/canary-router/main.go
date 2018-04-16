@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,6 +21,15 @@ func main() {
 	cfg := loadConfig()
 	envstruct.WriteReport(&cfg)
 
+	httpClient := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: cfg.SkipSSLValidation,
+			},
+		},
+	}
+
 	reader := logcache.NewClient(
 		cfg.LogCacheAddr,
 		logcache.WithHTTPClient(
@@ -28,6 +38,7 @@ func main() {
 				cfg.UaaClient,
 				cfg.UaaClientSecret,
 				logcache.WithUser(cfg.UaaUser, cfg.UaaPassword),
+				logcache.WithOauth2HTTPClient(httpClient),
 			),
 		),
 	)
