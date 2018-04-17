@@ -9,8 +9,8 @@ import (
 	"time"
 
 	logcache "code.cloudfoundry.org/go-log-cache"
-	"github.com/apoydence/cf-canary-deploy/internal/predicate"
-	"github.com/apoydence/cf-canary-deploy/internal/proxy"
+	"github.com/apoydence/cf-canary-router/internal/predicate"
+	"github.com/apoydence/cf-canary-router/internal/proxy"
 	"github.com/bradylove/envstruct"
 )
 

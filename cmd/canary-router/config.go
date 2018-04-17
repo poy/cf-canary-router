@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"code.cloudfoundry.org/go-envstruct"
-	"github.com/apoydence/cf-canary-deploy/internal/proxy"
+	"github.com/apoydence/cf-canary-router/internal/proxy"
 )
 
 type Config struct {

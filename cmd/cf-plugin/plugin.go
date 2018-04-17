@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"code.cloudfoundry.org/cli/plugin"
-	"github.com/apoydence/cf-canary-deploy/internal/command"
+	"github.com/apoydence/cf-canary-router/internal/command"
 )
 
 type cli struct{}
@@ -24,7 +24,7 @@ func (c cli) Run(conn plugin.CliConnection, args []string) {
 	httpClient := &http.Client{
 		Timeout: 5 * time.Second,
 	}
-	downloader := command.NewGithubReleaseDownloader("apoydence/cf-canary-deploy", httpClient, logger)
+	downloader := command.NewGithubReleaseDownloader("apoydence/cf-canary-router", httpClient, logger)
 
 	switch args[0] {
 	case "canary-router":

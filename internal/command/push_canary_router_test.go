@@ -8,7 +8,7 @@ import (
 
 	"code.cloudfoundry.org/cli/plugin"
 	"code.cloudfoundry.org/cli/plugin/models"
-	"github.com/apoydence/cf-canary-deploy/internal/command"
+	"github.com/apoydence/cf-canary-router/internal/command"
 	"github.com/apoydence/onpar"
 	. "github.com/apoydence/onpar/expect"
 	. "github.com/apoydence/onpar/matchers"
@@ -64,7 +64,7 @@ func TestPushCanaryRouter(t *testing.T) {
 
 		Expect(t, t.logger.printMessages).To(Contain(
 			"The canary router functionality is an experimental feature. " +
-				"See https://github.com/apoydence/cf-canary-deploy for more details.\n" +
+				"See https://github.com/apoydence/cf-canary-router for more details.\n" +
 				"Do you wish to proceed? [y/N] ",
 		))
 
@@ -168,7 +168,7 @@ func TestPushCanaryRouter(t *testing.T) {
 
 		Expect(t, t.logger.printMessages).To(Contain(
 			"The canary router functionality is an experimental feature. " +
-				"See https://github.com/apoydence/cf-canary-deploy for more details.\n" +
+				"See https://github.com/apoydence/cf-canary-router for more details.\n" +
 				"Do you wish to proceed? [y/N] ",
 		))
 

@@ -10,7 +10,7 @@ import (
 
 	logcache "code.cloudfoundry.org/go-log-cache"
 	"code.cloudfoundry.org/go-loggregator/rpc/loggregator_v2"
-	"github.com/apoydence/cf-canary-deploy/internal/predicate"
+	"github.com/apoydence/cf-canary-router/internal/predicate"
 	"github.com/apoydence/onpar"
 	. "github.com/apoydence/onpar/expect"
 	. "github.com/apoydence/onpar/matchers"

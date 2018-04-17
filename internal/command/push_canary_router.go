@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"code.cloudfoundry.org/cli/plugin"
-	"github.com/apoydence/cf-canary-deploy/internal/proxy"
+	"github.com/apoydence/cf-canary-router/internal/proxy"
 )
 
 type Downloader interface {
@@ -54,7 +54,7 @@ func PushCanaryRouter(cli plugin.CliConnection, reader io.Reader, args []string,
 	if !*force {
 		log.Print(
 			"The canary router functionality is an experimental feature. ",
-			"See https://github.com/apoydence/cf-canary-deploy for more details.\n",
+			"See https://github.com/apoydence/cf-canary-router for more details.\n",
 			"Do you wish to proceed? [y/N] ",
 		)
 

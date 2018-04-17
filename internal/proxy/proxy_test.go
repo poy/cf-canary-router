@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/apoydence/cf-canary-deploy/internal/proxy"
+	"github.com/apoydence/cf-canary-router/internal/proxy"
 	"github.com/apoydence/onpar"
 	. "github.com/apoydence/onpar/expect"
 	. "github.com/apoydence/onpar/matchers"
