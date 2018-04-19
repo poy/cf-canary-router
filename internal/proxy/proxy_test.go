@@ -102,6 +102,7 @@ func TestProxy(t *testing.T) {
 		// Skip the scheme
 		Expect(t, r.Host).To(Equal(t.newTestServer.URL[7:]))
 	})
+
 	o.Spec("it survives the race detector", func(t TP) {
 		var wg sync.WaitGroup
 		defer wg.Wait()

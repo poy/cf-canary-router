@@ -21,6 +21,7 @@ type TP struct {
 
 	spyDataReader *spyDataReader
 	p             *predicate.PromQL
+	ticker        chan time.Time
 }
 
 func TestPromQLPredicate(t *testing.T) {
@@ -30,14 +31,15 @@ func TestPromQLPredicate(t *testing.T) {
 
 	o.BeforeEach(func(t *testing.T) TP {
 		spyDataReader := newSpyDataReader()
-		ticker := make(chan time.Time, 1)
-		ticker <- time.Now()
+		ticker := make(chan time.Time, 10)
 
 		return TP{
 			T:             t,
 			spyDataReader: spyDataReader,
+			ticker:        ticker,
 			p: predicate.NewPromQL(
 				`metric{source_id="some-id-1"} + metric{source_id="some-id-2"} > 5`,
+				3,
 				spyDataReader,
 				ticker,
 				log.New(ioutil.Discard, "", 0),
@@ -45,7 +47,12 @@ func TestPromQLPredicate(t *testing.T) {
 		}
 	})
 
+	o.Spec("it returns true before the ticker has fired", func(t TP) {
+		Expect(t, t.p.Predicate()).To(BeTrue())
+	})
+
 	o.Spec("it returns true while the query returns true", func(t TP) {
+		t.ticker <- time.Now()
 		t.spyDataReader.readErrs = []error{nil, nil}
 		t.spyDataReader.readResults = [][]*loggregator_v2.Envelope{
 			{{
@@ -76,11 +83,72 @@ func TestPromQLPredicate(t *testing.T) {
 		))
 	})
 
-	o.Spec("it returns false while the query returns false", func(t TP) {
-		Expect(t, t.p.Predicate()).To(BeFalse())
-		Expect(t, t.spyDataReader.ReadSourceIDs).To(ViaPolling(
-			Contain("some-id-1", "some-id-2"),
-		))
+	o.Spec("it recovers if it does not fail too often", func(t TP) {
+		t.ticker <- time.Now()
+		Expect(t, t.p.Predicate).To(Always(BeTrue()))
+
+		t.spyDataReader.readErrs = []error{nil, nil}
+		t.spyDataReader.readResults = [][]*loggregator_v2.Envelope{
+			{{
+				SourceId:  "some-id-1",
+				Timestamp: time.Now().UnixNano(),
+				Message: &loggregator_v2.Envelope_Counter{
+					Counter: &loggregator_v2.Counter{
+						Name:  "metric",
+						Total: 99,
+					},
+				},
+			}},
+			{{
+				SourceId:  "some-id-2",
+				Timestamp: time.Now().UnixNano(),
+				Message: &loggregator_v2.Envelope_Counter{
+					Counter: &loggregator_v2.Counter{
+						Name:  "metric",
+						Total: 99,
+					},
+				},
+			}},
+		}
+
+		t.ticker <- time.Now()
+		Expect(t, t.p.Predicate).To(ViaPolling(BeTrue()))
+	})
+
+	o.Spec("it stays false once it fails enough times", func(t TP) {
+		// We have the max num of failures set to 3.
+		t.ticker <- time.Now()
+		t.ticker <- time.Now()
+		t.ticker <- time.Now()
+		t.ticker <- time.Now()
+		Expect(t, t.p.Predicate).To(ViaPolling(BeFalse()))
+
+		t.spyDataReader.readErrs = []error{nil, nil}
+		t.spyDataReader.readResults = [][]*loggregator_v2.Envelope{
+			{{
+				SourceId:  "some-id-1",
+				Timestamp: time.Now().UnixNano(),
+				Message: &loggregator_v2.Envelope_Counter{
+					Counter: &loggregator_v2.Counter{
+						Name:  "metric",
+						Total: 99,
+					},
+				},
+			}},
+			{{
+				SourceId:  "some-id-2",
+				Timestamp: time.Now().UnixNano(),
+				Message: &loggregator_v2.Envelope_Counter{
+					Counter: &loggregator_v2.Counter{
+						Name:  "metric",
+						Total: 99,
+					},
+				},
+			}},
+		}
+
+		t.ticker <- time.Now()
+		Expect(t, t.p.Predicate).To(Always(BeFalse()))
 	})
 }
 

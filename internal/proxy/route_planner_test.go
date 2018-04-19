@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/apoydence/cf-canary-router/internal/proxy"
+	"github.com/apoydence/cf-canary-router/internal/structuredlogs"
 	"github.com/apoydence/onpar"
 	. "github.com/apoydence/onpar/expect"
 	. "github.com/apoydence/onpar/matchers"
@@ -14,8 +15,9 @@ import (
 
 type TR struct {
 	*testing.T
-	p            *proxy.RoutePlanner
-	spyPredicate *spyPredicate
+	p              *proxy.RoutePlanner
+	spyEventWriter *spyEventWriter
+	spyPredicate   *spyPredicate
 }
 
 func TestPlanner(t *testing.T) {
@@ -32,12 +34,16 @@ func TestPlanner(t *testing.T) {
 		spyPredicate := newSpyPredicate()
 		spyPredicate.result = true
 
+		spyEventWriter := newSpyEventWriter()
+
 		return TR{
-			T:            t,
-			spyPredicate: spyPredicate,
+			T:              t,
+			spyPredicate:   spyPredicate,
+			spyEventWriter: spyEventWriter,
 			p: proxy.NewRoutePlanner(
 				plan,
 				spyPredicate.Predicate,
+				spyEventWriter,
 				log.New(ioutil.Discard, "", 0),
 			),
 		}
@@ -59,12 +65,37 @@ func TestPlanner(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			Expect(t, t.p.CurrentPercentage()).To(Equal(100))
 		}
+
+		Expect(t, t.spyEventWriter.events).To(Contain(structuredlogs.Event{
+			Code:    proxy.NextPlanStep,
+			Message: "starting next step: {Percentage:10 Duration:100ms}",
+		}))
+
+		Expect(t, t.spyEventWriter.events).To(Contain(structuredlogs.Event{
+			Code:    proxy.FinishedPlanSteps,
+			Message: "finished steps",
+		}))
 	})
 
 	o.Spec("it aborts and returns 0 if the predicate fails", func(t TR) {
 		t.spyPredicate.result = false
 		for i := 0; i < 100; i++ {
 			Expect(t, t.p.CurrentPercentage()).To(Equal(0))
+		}
+
+		Expect(t, t.spyEventWriter.events).To(HaveLen(100))
+		Expect(t, t.spyEventWriter.events[0].Code).To(Equal(proxy.Abort))
+	})
+
+	o.Spec("it survives the race detector", func(t TR) {
+		go func() {
+			for i := 0; i < 100; i++ {
+				t.p.CurrentPercentage()
+			}
+		}()
+
+		for i := 0; i < 100; i++ {
+			t.p.CurrentPercentage()
 		}
 	})
 }
@@ -79,4 +110,16 @@ func newSpyPredicate() *spyPredicate {
 
 func (s *spyPredicate) Predicate() bool {
 	return s.result
+}
+
+type spyEventWriter struct {
+	events []structuredlogs.Event
+}
+
+func newSpyEventWriter() *spyEventWriter {
+	return &spyEventWriter{}
+}
+
+func (s *spyEventWriter) Write(e structuredlogs.Event) {
+	s.events = append(s.events, e)
 }

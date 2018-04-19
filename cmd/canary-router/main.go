@@ -11,6 +11,7 @@ import (
 	logcache "code.cloudfoundry.org/go-log-cache"
 	"github.com/apoydence/cf-canary-router/internal/predicate"
 	"github.com/apoydence/cf-canary-router/internal/proxy"
+	"github.com/apoydence/cf-canary-router/internal/structuredlogs"
 	"github.com/bradylove/envstruct"
 )
 
@@ -43,8 +44,12 @@ func main() {
 		),
 	)
 
+	// We aren't reading events, so we don't need a LineStream.
+	eventWriter := structuredlogs.NewEventStream(nil, os.Stdout)
+
 	predicate := predicate.NewPromQL(
 		cfg.Query,
+		30,
 		reader,
 		time.Tick(time.Second),
 		log.New(os.Stderr, "", log.LstdFlags),
@@ -53,6 +58,7 @@ func main() {
 	planner := proxy.NewRoutePlanner(
 		cfg.Plan.Plan,
 		predicate.Predicate,
+		eventWriter,
 		log.New(os.Stderr, "", log.LstdFlags),
 	)
 

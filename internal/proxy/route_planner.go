@@ -1,18 +1,29 @@
 package proxy
 
 import (
+	"fmt"
 	"log"
+	"sync/atomic"
 	"time"
+	"unsafe"
+
+	"github.com/apoydence/cf-canary-router/internal/structuredlogs"
 )
 
 type RoutePlanner struct {
-	idx  int
-	last time.Time
+	// currentPlan
+	current unsafe.Pointer
 
+	w   EventWriter
 	log *log.Logger
 
 	plan      Plan
 	predicate Predicate
+}
+
+type currentPlan struct {
+	idx  int64
+	last time.Time
 }
 
 type PlanStep struct {
@@ -29,32 +40,80 @@ type Plan []PlanStep
 
 type Predicate func() bool
 
-func NewRoutePlanner(plan Plan, p Predicate, log *log.Logger) *RoutePlanner {
+// Codes are used to relay information from the application to the CLI about
+// what actions are being taken.
+const (
+	NextPlanStep      = 10
+	FinishedPlanSteps = 20
+	Abort             = 30
+)
+
+type EventWriter interface {
+	Write(structuredlogs.Event)
+}
+
+func NewRoutePlanner(plan Plan, p Predicate, w EventWriter, log *log.Logger) *RoutePlanner {
+	current := &currentPlan{
+		idx: -1,
+	}
+
 	return &RoutePlanner{
 		plan:      plan,
 		predicate: p,
+		w:         w,
 		log:       log,
+		current:   unsafe.Pointer(current),
 	}
 }
 
 func (p *RoutePlanner) CurrentPercentage() int {
 	if !p.predicate() {
+		p.w.Write(structuredlogs.Event{
+			Code:    Abort,
+			Message: "predicate failed. Directing traffic to previous route...",
+		})
 		return 0
 	}
 
-	if p.last.IsZero() {
-		p.last = time.Now()
-	}
+	current := (*currentPlan)(atomic.LoadPointer(&p.current))
 
-	if p.idx >= len(p.plan) {
+	if current.idx >= int64(len(p.plan)) {
+		p.w.Write(structuredlogs.Event{
+			Code:    FinishedPlanSteps,
+			Message: "finished steps",
+		})
 		return 100
 	}
 
-	if time.Since(p.last) >= p.plan[p.idx].Duration {
-		p.last = time.Now()
-		p.idx++
+	if current.last.IsZero() || time.Since(current.last) >= p.plan[current.idx].Duration {
+		updated := &currentPlan{
+			last: time.Now(),
+			idx:  current.idx + 1,
+		}
+
+		if !atomic.CompareAndSwapPointer(
+			&p.current,
+			unsafe.Pointer(current),
+			unsafe.Pointer(updated),
+		) {
+			return p.CurrentPercentage()
+		}
+		current = updated
+
+		if current.idx >= int64(len(p.plan)) {
+			p.w.Write(structuredlogs.Event{
+				Code:    FinishedPlanSteps,
+				Message: "finished steps",
+			})
+			return p.CurrentPercentage()
+		}
+
+		p.w.Write(structuredlogs.Event{
+			Code:    NextPlanStep,
+			Message: fmt.Sprintf("starting next step: %+v", p.plan[current.idx]),
+		})
 		return p.CurrentPercentage()
 	}
 
-	return p.plan[p.idx].Percentage
+	return p.plan[current.idx].Percentage
 }

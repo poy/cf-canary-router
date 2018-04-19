@@ -15,9 +15,11 @@ import (
 )
 
 type PromQL struct {
-	query string
-	r     DataReader
-	log   *log.Logger
+	query       string
+	r           DataReader
+	log         *log.Logger
+	maxFailures int
+	failures    int
 
 	ticker <-chan time.Time
 	result int64
@@ -34,15 +36,18 @@ type DataReader interface {
 
 func NewPromQL(
 	query string,
+	maxFailures int,
 	r DataReader,
 	ticker <-chan time.Time,
 	log *log.Logger,
 ) *PromQL {
 	p := &PromQL{
-		query:  query,
-		r:      r,
-		ticker: ticker,
-		log:    log,
+		query:       query,
+		r:           r,
+		ticker:      ticker,
+		log:         log,
+		result:      1,
+		maxFailures: maxFailures,
 	}
 
 	go p.start()
@@ -77,7 +82,18 @@ func (p *PromQL) start() {
 			continue
 		}
 
-		atomic.StoreInt64(&p.result, int64(len(result.String())))
+		if len(result.String()) == 0 {
+			p.failures++
+			if p.failures >= p.maxFailures {
+				atomic.StoreInt64(&p.result, 0)
+				return
+			}
+
+			continue
+		}
+
+		p.failures = 0
+		atomic.StoreInt64(&p.result, 1)
 	}
 }
 
