@@ -1,14 +1,20 @@
 package command_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"code.cloudfoundry.org/cli/plugin"
 	"code.cloudfoundry.org/cli/plugin/models"
+	logcache "code.cloudfoundry.org/go-log-cache"
+	"code.cloudfoundry.org/go-loggregator/rpc/loggregator_v2"
 	"github.com/apoydence/cf-canary-router/internal/command"
+	"github.com/apoydence/cf-canary-router/internal/proxy"
+	"github.com/apoydence/cf-canary-router/internal/structuredlogs"
 	"github.com/apoydence/onpar"
 	. "github.com/apoydence/onpar/expect"
 	. "github.com/apoydence/onpar/matchers"
@@ -21,6 +27,7 @@ type TP struct {
 	cli        *stubCliConnection
 	downloader *stubDownloader
 	reader     *strings.Reader
+	spyReader  *spyReader
 }
 
 func TestPushCanaryRouter(t *testing.T) {
@@ -31,9 +38,36 @@ func TestPushCanaryRouter(t *testing.T) {
 	o.BeforeEach(func(t *testing.T) TP {
 		cli := newStubCliConnection()
 		cli.apiEndpoint = "https://api.something.com"
+		cli.getApp["current-app"] = plugin_models.GetAppModel{
+			Routes: []plugin_models.GetApp_RouteSummary{{
+				Host:   "current",
+				Domain: plugin_models.GetApp_DomainFields{Name: "some.route"},
+				Path:   "/v1",
+			}},
+		}
+
+		cli.getApp["canary-app"] = plugin_models.GetAppModel{
+			Routes: []plugin_models.GetApp_RouteSummary{{
+				Host:   "canary",
+				Domain: plugin_models.GetApp_DomainFields{Name: "some.route"},
+				Path:   "/v1",
+			}},
+		}
+
+		cli.getApp["canary-router"] = plugin_models.GetAppModel{
+			Guid: "some-guid",
+		}
+
+		cli.getApp["some-name"] = plugin_models.GetAppModel{
+			Guid: "some-guid",
+		}
 
 		downloader := newStubDownloader()
 		downloader.path = "/downloaded/temp/dir/canary_router"
+
+		spyReader := newSpyReader()
+		event := structuredlogs.Event{Code: proxy.FinishedPlanSteps}
+		writeEvent(event, spyReader)
 
 		return TP{
 			T:          t,
@@ -41,6 +75,7 @@ func TestPushCanaryRouter(t *testing.T) {
 			cli:        cli,
 			reader:     strings.NewReader("y\n"),
 			downloader: downloader,
+			spyReader:  spyReader,
 		}
 	})
 
@@ -52,13 +87,14 @@ func TestPushCanaryRouter(t *testing.T) {
 				"--path", "some-temp-dir",
 				"--username", "some-user",
 				"--password", "some-password",
-				"--canary-route", "https://some.route",
-				"--current-route", "https://some.other.route",
+				"--canary-app", "canary-app",
+				"--current-app", "current-app",
 				"--query", "some-query",
 				"--plan", `{"Plan":[{"Percentage":99,"Duration":1000}]}`,
 				"--skip-ssl-validation",
 			},
 			t.downloader,
+			t.spyReader.read,
 			t.logger,
 		)
 
@@ -75,8 +111,8 @@ func TestPushCanaryRouter(t *testing.T) {
 				"-p", "some-temp-dir",
 				"-b", "binary_buildpack",
 				"-c", "./canary-router",
-				"--health-check-type", "process",
 				"--no-start",
+				"--no-route",
 			},
 		))
 
@@ -86,9 +122,8 @@ func TestPushCanaryRouter(t *testing.T) {
 			[]string{"set-env", "canary-router", "UAA_CLIENT", "cf"},
 			[]string{"set-env", "canary-router", "UAA_USER", "some-user"},
 			[]string{"set-env", "canary-router", "UAA_PASSWORD", "some-password"},
-			[]string{"set-env", "canary-router", "CANARY_ROUTE", "https://some.route"},
-			[]string{"set-env", "canary-router", "CANARY_ROUTE", "https://some.route"},
-			[]string{"set-env", "canary-router", "CURRENT_ROUTE", "https://some.other.route"},
+			[]string{"set-env", "canary-router", "CANARY_ROUTE", "https://canary.some.route/v1"},
+			[]string{"set-env", "canary-router", "CURRENT_ROUTE", "https://current.some.route/v1"},
 			[]string{"set-env", "canary-router", "QUERY", "some-query"},
 			[]string{"set-env", "canary-router", "PLAN", `{"Plan":[{"Percentage":99,"Duration":1000}]}`},
 			[]string{"set-env", "canary-router", "SKIP_SSL_VALIDATION", "true"},
@@ -108,11 +143,12 @@ func TestPushCanaryRouter(t *testing.T) {
 			[]string{
 				"--username", "some-user",
 				"--password", "some-password",
-				"--canary-route", "https://some.route",
-				"--current-route", "https://some.other.route",
+				"--canary-app", "canary-app",
+				"--current-app", "current-app",
 				"--query", "some-query",
 			},
 			t.downloader,
+			t.spyReader.read,
 			t.logger,
 		)
 
@@ -123,9 +159,17 @@ func TestPushCanaryRouter(t *testing.T) {
 				"-p", "/downloaded/temp/dir",
 				"-b", "binary_buildpack",
 				"-c", "./canary-router",
-				"--health-check-type", "process",
 				"--no-start",
+				"--no-route",
 			},
+		))
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"map-route", "current-app", "some.route", "--hostname", "canary-router-temp", "--path", "/v1"},
+		))
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"map-route", "canary-router", "some.route", "--hostname", "current", "--path", "/v1"},
 		))
 
 		Expect(t, t.downloader.assetName).To(Equal("canary-router"))
@@ -135,8 +179,8 @@ func TestPushCanaryRouter(t *testing.T) {
 			[]string{"set-env", "canary-router", "UAA_CLIENT", "cf"},
 			[]string{"set-env", "canary-router", "UAA_USER", "some-user"},
 			[]string{"set-env", "canary-router", "UAA_PASSWORD", "some-password"},
-			[]string{"set-env", "canary-router", "CANARY_ROUTE", "https://some.route"},
-			[]string{"set-env", "canary-router", "CURRENT_ROUTE", "https://some.other.route"},
+			[]string{"set-env", "canary-router", "CANARY_ROUTE", "https://canary.some.route/v1"},
+			[]string{"set-env", "canary-router", "CURRENT_ROUTE", "https://current.some.route/v1"},
 			[]string{"set-env", "canary-router", "QUERY", "some-query"},
 			[]string{"set-env", "canary-router", "PLAN", `{"Plan":[{"Percentage":10,"Duration":300000000000}]}`},
 			[]string{"set-env", "canary-router", "SKIP_SSL_VALIDATION", "false"},
@@ -146,6 +190,14 @@ func TestPushCanaryRouter(t *testing.T) {
 			[]string{
 				"start", "canary-router",
 			},
+		))
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"map-route", "current-app", "some.route", "--hostname", "canary-router-temp", "--path", "/v1"},
+		))
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"unmap-route", "current-app", "some.route", "--hostname", "current", "--path", "/v1"},
 		))
 	})
 
@@ -158,11 +210,12 @@ func TestPushCanaryRouter(t *testing.T) {
 				"--name", "some-name",
 				"--username", "some-user",
 				"--password", "some-password",
-				"--canary-route", "https://some.route",
-				"--current-route", "https://some.other.route",
+				"--canary-app", "canary-app",
+				"--current-app", "current-app",
 				"--query", "some-query",
 			},
 			t.downloader,
+			t.spyReader.read,
 			t.logger,
 		)
 
@@ -179,8 +232,8 @@ func TestPushCanaryRouter(t *testing.T) {
 				"-p", "some-temp-dir",
 				"-b", "binary_buildpack",
 				"-c", "./canary-router",
-				"--health-check-type", "process",
 				"--no-start",
+				"--no-route",
 			},
 		))
 
@@ -190,8 +243,8 @@ func TestPushCanaryRouter(t *testing.T) {
 			[]string{"set-env", "some-name", "UAA_CLIENT", "cf"},
 			[]string{"set-env", "some-name", "UAA_USER", "some-user"},
 			[]string{"set-env", "some-name", "UAA_PASSWORD", "some-password"},
-			[]string{"set-env", "some-name", "CANARY_ROUTE", "https://some.route"},
-			[]string{"set-env", "some-name", "CURRENT_ROUTE", "https://some.other.route"},
+			[]string{"set-env", "some-name", "CANARY_ROUTE", "https://canary.some.route/v1"},
+			[]string{"set-env", "some-name", "CURRENT_ROUTE", "https://current.some.route/v1"},
 			[]string{"set-env", "some-name", "QUERY", "some-query"},
 			[]string{"set-env", "some-name", "PLAN", `{"Plan":[{"Percentage":10,"Duration":300000000000}]}`},
 			[]string{"set-env", "some-name", "SKIP_SSL_VALIDATION", "false"},
@@ -201,6 +254,75 @@ func TestPushCanaryRouter(t *testing.T) {
 			[]string{
 				"start", "some-name",
 			},
+		))
+	})
+
+	o.Spec("it sets the route to the current app if the canary aborts", func(t TP) {
+		t.spyReader.envelopes = nil
+		t.spyReader.errs = nil
+		event := structuredlogs.Event{Code: proxy.Abort}
+		writeEvent(event, t.spyReader)
+		command.PushCanaryRouter(
+			t.cli,
+			t.reader,
+			[]string{
+				"--path", "some-temp-dir",
+				"--name", "some-name",
+				"--username", "some-user",
+				"--password", "some-password",
+				"--canary-app", "canary-app",
+				"--current-app", "current-app",
+				"--query", "some-query",
+			},
+			t.downloader,
+			t.spyReader.read,
+			t.logger,
+		)
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"map-route", "current-app", "some.route", "--hostname", "current", "--path", "/v1"},
+		))
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"unmap-route", "current-app", "some.route", "--hostname", "canary-router-temp", "--path", "/v1"},
+		))
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"delete", "some-name", "-f"},
+		))
+	})
+
+	o.Spec("it sets the route to the canary app if the canary succeeds", func(t TP) {
+		t.spyReader.envelopes = nil
+		t.spyReader.errs = nil
+		event := structuredlogs.Event{Code: proxy.FinishedPlanSteps}
+		writeEvent(event, t.spyReader)
+		command.PushCanaryRouter(
+			t.cli,
+			t.reader,
+			[]string{
+				"--path", "some-temp-dir",
+				"--username", "some-user",
+				"--password", "some-password",
+				"--canary-app", "canary-app",
+				"--current-app", "current-app",
+				"--query", "some-query",
+			},
+			t.downloader,
+			t.spyReader.read,
+			t.logger,
+		)
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"map-route", "canary-app", "some.route", "--hostname", "current", "--path", "/v1"},
+		))
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"unmap-route", "current-app", "some.route", "--hostname", "canary-router-temp", "--path", "/v1"},
+		))
+
+		Expect(t, t.cli.cliCommandWithoutTerminalOutputArgs).To(Contain(
+			[]string{"delete", "canary-router", "-f"},
 		))
 	})
 
@@ -215,11 +337,12 @@ func TestPushCanaryRouter(t *testing.T) {
 					"--path", "some-temp-dir",
 					"--username", "some-user",
 					"--password", "some-password",
-					"--canary-route", "https://some.route",
-					"--current-route", "https://some.other.route",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
 					"--query", "some-query",
 				},
 				t.downloader,
+				t.spyReader.read,
 				t.logger,
 			)
 		}).To(Panic())
@@ -237,11 +360,12 @@ func TestPushCanaryRouter(t *testing.T) {
 					"--path", "some-temp-dir",
 					"--username", "some-user",
 					"--password", "some-password",
-					"--canary-route", "https://some.route",
-					"--current-route", "https://some.other.route",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
 					"--query", "some-query",
 				},
 				t.downloader,
+				t.spyReader.read,
 				t.logger,
 			)
 		}).To(Panic())
@@ -258,15 +382,104 @@ func TestPushCanaryRouter(t *testing.T) {
 					"--path", "some-temp-dir",
 					"--username", "some-user",
 					"--password", "some-password",
-					"--canary-route", "https://some.route",
-					"--current-route", "https://some.other.route",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
 					"--query", "some-query",
 				},
 				t.downloader,
+				t.spyReader.read,
 				t.logger,
 			)
 		}).To(Panic())
 		Expect(t, t.logger.fatalfMessage).To(Equal("failed to push"))
+	})
+
+	o.Spec("fatally logs if the GetApp for the canary-app fails", func(t TP) {
+		delete(t.cli.getApp, "canary-app")
+		Expect(t, func() {
+			command.PushCanaryRouter(
+				t.cli,
+				t.reader,
+				[]string{
+					"--path", "some-temp-dir",
+					"--username", "some-user",
+					"--password", "some-password",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
+					"--query", "some-query",
+				},
+				t.downloader,
+				t.spyReader.read,
+				t.logger,
+			)
+		}).To(Panic())
+		Expect(t, t.logger.fatalfMessage).To(Equal("unknown app"))
+	})
+
+	o.Spec("fatally logs if the GetApp for the current-app fails", func(t TP) {
+		delete(t.cli.getApp, "current-app")
+		Expect(t, func() {
+			command.PushCanaryRouter(
+				t.cli,
+				t.reader,
+				[]string{
+					"--path", "some-temp-dir",
+					"--username", "some-user",
+					"--password", "some-password",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
+					"--query", "some-query",
+				},
+				t.downloader,
+				t.spyReader.read,
+				t.logger,
+			)
+		}).To(Panic())
+		Expect(t, t.logger.fatalfMessage).To(Equal("unknown app"))
+	})
+
+	o.Spec("fatally logs if the GetApp for the canary-app doesn't have a route", func(t TP) {
+		t.cli.getApp["canary-app"] = plugin_models.GetAppModel{}
+		Expect(t, func() {
+			command.PushCanaryRouter(
+				t.cli,
+				t.reader,
+				[]string{
+					"--path", "some-temp-dir",
+					"--username", "some-user",
+					"--password", "some-password",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
+					"--query", "some-query",
+				},
+				t.downloader,
+				t.spyReader.read,
+				t.logger,
+			)
+		}).To(Panic())
+		Expect(t, t.logger.fatalfMessage).To(Equal("canary-app does not have a route"))
+	})
+
+	o.Spec("fatally logs if the GetApp for the current-app doesn't have a route", func(t TP) {
+		t.cli.getApp["current-app"] = plugin_models.GetAppModel{}
+		Expect(t, func() {
+			command.PushCanaryRouter(
+				t.cli,
+				t.reader,
+				[]string{
+					"--path", "some-temp-dir",
+					"--username", "some-user",
+					"--password", "some-password",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
+					"--query", "some-query",
+				},
+				t.downloader,
+				t.spyReader.read,
+				t.logger,
+			)
+		}).To(Panic())
+		Expect(t, t.logger.fatalfMessage).To(Equal("current-app does not have a route"))
 	})
 
 	o.Spec("fatally logs if the canary-router username is not provided", func(t TP) {
@@ -277,11 +490,12 @@ func TestPushCanaryRouter(t *testing.T) {
 				[]string{
 					"--path", "some-temp-dir",
 					"--password", "some-password",
-					"--canary-route", "https://some.route",
-					"--current-route", "https://some.other.route",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
 					"--query", "some-query",
 				},
 				t.downloader,
+				t.spyReader.read,
 				t.logger,
 			)
 		}).To(Panic())
@@ -296,18 +510,19 @@ func TestPushCanaryRouter(t *testing.T) {
 				[]string{
 					"--path", "some-temp-dir",
 					"--username", "some-user",
-					"--canary-route", "https://some.route",
-					"--current-route", "https://some.other.route",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
 					"--query", "some-query",
 				},
 				t.downloader,
+				t.spyReader.read,
 				t.logger,
 			)
 		}).To(Panic())
 		Expect(t, t.logger.fatalfMessage).To(Equal("required flag --password missing"))
 	})
 
-	o.Spec("fatally logs if the canary-route is not provided", func(t TP) {
+	o.Spec("fatally logs if the canary-app is not provided", func(t TP) {
 		Expect(t, func() {
 			command.PushCanaryRouter(
 				t.cli,
@@ -316,17 +531,18 @@ func TestPushCanaryRouter(t *testing.T) {
 					"--path", "some-temp-dir",
 					"--username", "some-user",
 					"--password", "some-password",
-					"--current-route", "https://some.other.route",
+					"--current-app", "current-app",
 					"--query", "some-query",
 				},
 				t.downloader,
+				t.spyReader.read,
 				t.logger,
 			)
 		}).To(Panic())
-		Expect(t, t.logger.fatalfMessage).To(Equal("required flag --canary-route missing"))
+		Expect(t, t.logger.fatalfMessage).To(Equal("required flag --canary-app missing"))
 	})
 
-	o.Spec("fatally logs if the current-route is not provided", func(t TP) {
+	o.Spec("fatally logs if the current-app is not provided", func(t TP) {
 		Expect(t, func() {
 			command.PushCanaryRouter(
 				t.cli,
@@ -335,14 +551,15 @@ func TestPushCanaryRouter(t *testing.T) {
 					"--path", "some-temp-dir",
 					"--username", "some-user",
 					"--password", "some-password",
-					"--canary-route", "https://some.route",
+					"--canary-app", "canary-app",
 					"--query", "some-query",
 				},
 				t.downloader,
+				t.spyReader.read,
 				t.logger,
 			)
 		}).To(Panic())
-		Expect(t, t.logger.fatalfMessage).To(Equal("required flag --current-route missing"))
+		Expect(t, t.logger.fatalfMessage).To(Equal("required flag --current-app missing"))
 	})
 
 	o.Spec("fatally logs if the query is not provided", func(t TP) {
@@ -354,10 +571,11 @@ func TestPushCanaryRouter(t *testing.T) {
 					"--path", "some-temp-dir",
 					"--username", "some-user",
 					"--password", "some-password",
-					"--canary-route", "https://some.route",
-					"--current-route", "https://some.other.route",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
 				},
 				t.downloader,
+				t.spyReader.read,
 				t.logger,
 			)
 		}).To(Panic())
@@ -373,12 +591,13 @@ func TestPushCanaryRouter(t *testing.T) {
 					"--path", "some-temp-dir",
 					"--username", "some-user",
 					"--password", "some-password",
-					"--canary-route", "https://some.route",
-					"--current-route", "https://some.other.route",
+					"--canary-app", "canary-app",
+					"--current-app", "current-app",
 					"--query", "some-query",
 					"--plan", "invalid",
 				},
 				t.downloader,
+				t.spyReader.read,
 				t.logger,
 			)
 		}).To(Panic())
@@ -397,12 +616,13 @@ func TestPushCanaryRouter(t *testing.T) {
 						"--path", "some-temp-dir",
 						"--username", "some-user",
 						"--password", "some-password",
-						"--canary-route", "https://some.route",
-						"--current-route", "https://some.other.route",
+						"--canary-app", "canary-app",
+						"--current-app", "current-app",
 						"--query", "some-query",
 						"--force",
 					},
 					t.downloader,
+					t.spyReader.read,
 					t.logger,
 				)
 			}).To(Panic())
@@ -457,9 +677,7 @@ func (s *stubDownloader) Download(assetName string) string {
 type stubCliConnection struct {
 	plugin.CliConnection
 
-	getAppName  string
-	getAppGuid  string
-	getAppError error
+	getApp map[string]plugin_models.GetAppModel
 
 	cliCommandWithoutTerminalOutputArgs     [][]string
 	cliCommandWithoutTerminalOutputResponse map[string]string
@@ -478,15 +696,17 @@ func newStubCliConnection() *stubCliConnection {
 	return &stubCliConnection{
 		cliCommandWithoutTerminalOutputResponse: make(map[string]string),
 		setEnvErrors:                            make(map[string]error),
+		getApp:                                  make(map[string]plugin_models.GetAppModel),
 	}
 }
 
 func (s *stubCliConnection) GetApp(name string) (plugin_models.GetAppModel, error) {
-	s.getAppName = name
-	return plugin_models.GetAppModel{
-		Name: name,
-		Guid: s.getAppGuid,
-	}, s.getAppError
+	m, ok := s.getApp[name]
+	if !ok {
+		return plugin_models.GetAppModel{}, errors.New("unknown app")
+	}
+
+	return m, nil
 }
 
 func (s *stubCliConnection) CliCommandWithoutTerminalOutput(args ...string) ([]string, error) {
@@ -524,4 +744,62 @@ func (s *stubCliConnection) CliCommand(args ...string) ([]string, error) {
 
 func (s *stubCliConnection) ApiEndpoint() (string, error) {
 	return s.apiEndpoint, s.apiEndpointError
+}
+
+type spyEventStream struct {
+	e structuredlogs.Event
+}
+
+func newSpyEventStream() *spyEventStream {
+	return &spyEventStream{}
+}
+
+func (s *spyEventStream) NextEvent() structuredlogs.Event {
+	return s.e
+}
+
+type spyReader struct {
+	sourceIDs []string
+	starts    []int64
+	opts      [][]logcache.ReadOption
+
+	envelopes [][]*loggregator_v2.Envelope
+	errs      []error
+}
+
+func newSpyReader() *spyReader {
+	return &spyReader{}
+}
+
+func (s *spyReader) read(ctx context.Context, sourceID string, start time.Time, opts ...logcache.ReadOption) ([]*loggregator_v2.Envelope, error) {
+	s.sourceIDs = append(s.sourceIDs, sourceID)
+	s.starts = append(s.starts, start.UnixNano())
+	s.opts = append(s.opts, opts)
+
+	if len(s.envelopes) != len(s.errs) {
+		panic("envelopes and errs should have same len")
+	}
+
+	if len(s.envelopes) == 0 {
+		return nil, nil
+	}
+
+	defer func() {
+		s.envelopes = s.envelopes[1:]
+		s.errs = s.errs[1:]
+	}()
+
+	return s.envelopes[0], s.errs[0]
+}
+
+func writeEvent(e structuredlogs.Event, r *spyReader) {
+	eventData, _ := e.Marshal()
+	r.envelopes = append(r.envelopes, []*loggregator_v2.Envelope{{
+		Message: &loggregator_v2.Envelope_Log{
+			Log: &loggregator_v2.Log{
+				Payload: []byte(eventData),
+			},
+		},
+	}})
+	r.errs = append(r.errs, nil)
 }

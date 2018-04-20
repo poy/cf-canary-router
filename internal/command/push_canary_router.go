@@ -2,16 +2,24 @@ package command
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
+	"os"
 	"path"
 	"strconv"
 	"strings"
 	"time"
 
+	llog "log"
+
 	"code.cloudfoundry.org/cli/plugin"
+	logcache "code.cloudfoundry.org/go-log-cache"
+	"code.cloudfoundry.org/go-loggregator/rpc/loggregator_v2"
 	"github.com/apoydence/cf-canary-router/internal/proxy"
+	"github.com/apoydence/cf-canary-router/internal/structuredlogs"
 )
 
 type Downloader interface {
@@ -24,14 +32,21 @@ type Logger interface {
 	Print(...interface{})
 }
 
-func PushCanaryRouter(cli plugin.CliConnection, reader io.Reader, args []string, d Downloader, log Logger) {
+func PushCanaryRouter(
+	cli plugin.CliConnection,
+	reader io.Reader,
+	args []string,
+	d Downloader,
+	r logcache.Reader,
+	log Logger,
+) {
 	f := flag.NewFlagSet("", flag.ContinueOnError)
 	p := f.String("path", "", "")
 	name := f.String("name", "canary-router", "")
 	username := f.String("username", "", "")
 	password := f.String("password", "", "")
-	canaryRoute := f.String("canary-route", "", "")
-	currentRoute := f.String("current-route", "", "")
+	canaryApp := f.String("canary-app", "", "")
+	currentApp := f.String("current-app", "", "")
 	query := f.String("query", "", "")
 	planStr := f.String("plan", "", "")
 	force := f.Bool("force", false, "")
@@ -41,8 +56,6 @@ func PushCanaryRouter(cli plugin.CliConnection, reader io.Reader, args []string,
 		log.Fatalf("%s", err)
 	}
 
-	_ = planStr
-
 	f.VisitAll(func(flag *flag.Flag) {
 		if flag.Value.String() == "" && (flag.Name != "path" && flag.Name != "plan" && flag.Name != "skip-ssl-validation") {
 			log.Fatalf("required flag --%s missing", flag.Name)
@@ -50,6 +63,30 @@ func PushCanaryRouter(cli plugin.CliConnection, reader io.Reader, args []string,
 	})
 
 	plan := parsePlan(*planStr, log)
+
+	canaryM, err := cli.GetApp(*canaryApp)
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
+
+	if len(canaryM.Routes) == 0 {
+		log.Fatalf("%s does not have a route", *canaryApp)
+	}
+
+	canaryR := canaryM.Routes[0]
+	canaryRoute := fmt.Sprintf("https://%s.%s%s", canaryR.Host, canaryR.Domain.Name, canaryR.Path)
+
+	currentM, err := cli.GetApp(*currentApp)
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
+
+	if len(currentM.Routes) == 0 {
+		log.Fatalf("%s does not have a route", *currentApp)
+	}
+
+	currentR := currentM.Routes[0]
+	currentRoute := fmt.Sprintf("https://%s.%s%s", currentR.Host, currentR.Domain.Name, currentR.Path)
 
 	if !*force {
 		log.Print(
@@ -79,12 +116,52 @@ func PushCanaryRouter(cli plugin.CliConnection, reader io.Reader, args []string,
 		"-p", *p,
 		"-b", "binary_buildpack",
 		"-c", "./canary-router",
-		"--health-check-type", "process",
 		"--no-start",
+		"--no-route",
 	)
 	if err != nil {
 		log.Fatalf("%s", err)
 	}
+
+	defer func() {
+		cli.CliCommandWithoutTerminalOutput(
+			"delete", *name, "-f",
+		)
+	}()
+
+	// Map the current app to a temp route
+	_, err = cli.CliCommandWithoutTerminalOutput(
+		"map-route", *name,
+		currentR.Domain.Name,
+		"--hostname", currentR.Host,
+		"--path", currentR.Path,
+	)
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
+
+	// Map the canary app to the current route
+	_, err = cli.CliCommandWithoutTerminalOutput(
+		"map-route", *currentApp,
+		currentR.Domain.Name,
+		"--hostname", "canary-router-temp",
+		"--path", currentR.Path,
+	)
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
+
+	defer func() {
+		_, err = cli.CliCommandWithoutTerminalOutput(
+			"unmap-route", *currentApp,
+			currentR.Domain.Name,
+			"--hostname", "canary-router-temp",
+			"--path", currentR.Path,
+		)
+		if err != nil {
+			log.Fatalf("%s", err)
+		}
+	}()
 
 	api, err := cli.ApiEndpoint()
 	if err != nil {
@@ -97,8 +174,8 @@ func PushCanaryRouter(cli plugin.CliConnection, reader io.Reader, args []string,
 		"UAA_CLIENT":          "cf",
 		"UAA_USER":            *username,
 		"UAA_PASSWORD":        *password,
-		"CANARY_ROUTE":        *canaryRoute,
-		"CURRENT_ROUTE":       *currentRoute,
+		"CANARY_ROUTE":        canaryRoute,
+		"CURRENT_ROUTE":       currentRoute,
 		"QUERY":               *query,
 		"PLAN":                plan,
 		"SKIP_SSL_VALIDATION": strconv.FormatBool(*skipSSLValidation),
@@ -114,6 +191,93 @@ func PushCanaryRouter(cli plugin.CliConnection, reader io.Reader, args []string,
 	}
 
 	cli.CliCommand("start", *name)
+
+	// Remove the route from the current app
+	_, err = cli.CliCommandWithoutTerminalOutput(
+		"unmap-route", *currentApp,
+		currentR.Domain.Name,
+		"--hostname", currentR.Host,
+		"--path", currentR.Path,
+	)
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
+
+	appInfo, err := cli.GetApp(*name)
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
+
+	log.Printf(appInfo.Guid)
+
+	envelopes := make(chan *loggregator_v2.Envelope, 10)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go logcache.Walk(
+		ctx,
+		appInfo.Guid,
+		func(es []*loggregator_v2.Envelope) bool {
+			for _, e := range es {
+				envelopes <- e
+			}
+
+			return true
+		},
+		r,
+		logcache.WithWalkBackoff(logcache.NewAlwaysRetryBackoff(time.Second)),
+		logcache.WithWalkLogger(llog.New(os.Stderr, "", 0)),
+	)
+
+	s := structuredlogs.NewEventStream(func() string {
+		for {
+			e := <-envelopes
+			if len(e.GetLog().GetPayload()) == 0 {
+				continue
+			}
+
+			return string(e.GetLog().GetPayload())
+		}
+	}, nil)
+
+	// Wait to see if the canary app succeeds
+	log.Printf("Waiting for events")
+	for {
+		e := s.NextEvent()
+
+		switch e.Code {
+		case proxy.NextPlanStep:
+			log.Printf(e.Message)
+		case proxy.FinishedPlanSteps:
+			log.Printf(e.Message)
+
+			_, err = cli.CliCommandWithoutTerminalOutput(
+				"map-route", *canaryApp,
+				currentR.Domain.Name,
+				"--hostname", currentR.Host,
+				"--path", currentR.Path,
+			)
+			if err != nil {
+				log.Fatalf("%s", err)
+			}
+
+			return
+		case proxy.Abort:
+			log.Printf(e.Message)
+
+			_, err = cli.CliCommandWithoutTerminalOutput(
+				"map-route", *currentApp,
+				currentR.Domain.Name,
+				"--hostname", currentR.Host,
+				"--path", currentR.Path,
+			)
+			if err != nil {
+				log.Fatalf("%s", err)
+			}
+
+			return
+		}
+	}
 }
 
 func parsePlan(planStr string, log Logger) string {

@@ -1,15 +1,18 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"code.cloudfoundry.org/cli/plugin"
+	logcache "code.cloudfoundry.org/go-log-cache"
 	"github.com/apoydence/cf-canary-router/internal/command"
 )
 
@@ -21,6 +24,7 @@ func (c cli) Run(conn plugin.CliConnection, args []string) {
 	}
 
 	logger := newLogger(os.Stderr)
+
 	httpClient := &http.Client{
 		Timeout: 5 * time.Second,
 	}
@@ -28,7 +32,34 @@ func (c cli) Run(conn plugin.CliConnection, args []string) {
 
 	switch args[0] {
 	case "canary-router":
-		command.PushCanaryRouter(conn, os.Stdin, args[1:], downloader, logger)
+		api, err := conn.ApiEndpoint()
+		if err != nil {
+			logger.Fatalf("%s", err)
+		}
+
+		skipSSLValidation, err := conn.IsSSLDisabled()
+		if err != nil {
+			logger.Fatalf("%s", err)
+		}
+
+		c := logcache.NewClient(
+			strings.Replace(api, "api", "log-cache", 1),
+			logcache.WithHTTPClient(
+				&tokenHTTPClient{
+					getToken: conn.AccessToken,
+					c: &http.Client{
+						Timeout: 5 * time.Second,
+						Transport: &http.Transport{
+							TLSClientConfig: &tls.Config{
+								InsecureSkipVerify: skipSSLValidation,
+							},
+						},
+					},
+				},
+			),
+		)
+
+		command.PushCanaryRouter(conn, os.Stdin, args[1:], downloader, c.Read, logger)
 	case "CLI-MESSAGE-UNINSTALL":
 		return
 	default:
@@ -93,4 +124,24 @@ func newLogger(w io.Writer) *logger {
 
 func (l *logger) Print(a ...interface{}) {
 	fmt.Fprint(os.Stdout, a...)
+}
+
+// HTTPClient is the client used for HTTP requests
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+type tokenHTTPClient struct {
+	c        HTTPClient
+	getToken func() (string, error)
+}
+
+func (c *tokenHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	token, err := c.getToken()
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", token)
+
+	return c.c.Do(req)
 }

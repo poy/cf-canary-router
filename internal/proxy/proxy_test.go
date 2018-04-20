@@ -54,6 +54,7 @@ func TestProxy(t *testing.T) {
 				oldTestServer.URL,
 				newTestServer.URL,
 				spyPlanner,
+				true,
 				log.New(ioutil.Discard, "", 0),
 			),
 		}

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"log"
 	"math/rand"
 	"net/http"
@@ -24,6 +25,7 @@ func New(
 	oldRoute string,
 	newRoute string,
 	planner Planner,
+	skipSSLValidation bool,
 	log *log.Logger,
 ) *Proxy {
 	oldU, err := url.Parse(oldRoute)
@@ -36,9 +38,23 @@ func New(
 		log.Fatalf("failed to parse URL (%s): %s", newRoute, err)
 	}
 
+	oldRp := httputil.NewSingleHostReverseProxy(oldU)
+	oldRp.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: skipSSLValidation,
+		},
+	}
+
+	newRp := httputil.NewSingleHostReverseProxy(newU)
+	newRp.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: skipSSLValidation,
+		},
+	}
+
 	return &Proxy{
-		oldRp:   httputil.NewSingleHostReverseProxy(oldU),
-		newRp:   httputil.NewSingleHostReverseProxy(newU),
+		oldRp:   oldRp,
+		newRp:   newRp,
 		planner: planner,
 
 		// Seed with a random values to ensure all the proxies don't blast the

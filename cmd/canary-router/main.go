@@ -66,6 +66,7 @@ func main() {
 		cfg.CurrentRoute,
 		cfg.CanaryRoute,
 		planner,
+		cfg.SkipSSLValidation,
 		log.New(os.Stderr, "", log.LstdFlags),
 	)
 
