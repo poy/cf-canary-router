@@ -87,8 +87,7 @@ func TestPromQLPredicate(t *testing.T) {
 		t.ticker <- time.Now()
 		Expect(t, t.p.Predicate).To(Always(BeTrue()))
 
-		t.spyDataReader.readErrs = []error{nil, nil}
-		t.spyDataReader.readResults = [][]*loggregator_v2.Envelope{
+		t.spyDataReader.setRead([][]*loggregator_v2.Envelope{
 			{{
 				SourceId:  "some-id-1",
 				Timestamp: time.Now().UnixNano(),
@@ -109,7 +108,9 @@ func TestPromQLPredicate(t *testing.T) {
 					},
 				},
 			}},
-		}
+		},
+			[]error{nil, nil},
+		)
 
 		t.ticker <- time.Now()
 		Expect(t, t.p.Predicate).To(ViaPolling(BeTrue()))
@@ -123,8 +124,7 @@ func TestPromQLPredicate(t *testing.T) {
 		t.ticker <- time.Now()
 		Expect(t, t.p.Predicate).To(ViaPolling(BeFalse()))
 
-		t.spyDataReader.readErrs = []error{nil, nil}
-		t.spyDataReader.readResults = [][]*loggregator_v2.Envelope{
+		t.spyDataReader.setRead([][]*loggregator_v2.Envelope{
 			{{
 				SourceId:  "some-id-1",
 				Timestamp: time.Now().UnixNano(),
@@ -145,7 +145,9 @@ func TestPromQLPredicate(t *testing.T) {
 					},
 				},
 			}},
-		}
+		},
+			[]error{nil, nil},
+		)
 
 		t.ticker <- time.Now()
 		Expect(t, t.p.Predicate).To(Always(BeFalse()))
@@ -201,4 +203,12 @@ func (s *spyDataReader) ReadSourceIDs() []string {
 	copy(result, s.readSourceIDs)
 
 	return result
+}
+
+func (s *spyDataReader) setRead(es [][]*loggregator_v2.Envelope, errs []error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.readResults = es
+	s.readErrs = errs
 }
