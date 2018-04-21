@@ -175,6 +175,9 @@ func (l *LogCacheQuerier) Select(ll ...*labels.Matcher) (storage.SeriesSet, erro
 			f = float64(e.GetCounter().GetTotal())
 		case *loggregator_v2.Envelope_Gauge:
 			f = e.GetGauge().GetMetrics()[metric].GetValue()
+		case *loggregator_v2.Envelope_Timer:
+			timer := e.GetTimer()
+			f = float64(timer.GetStop() - timer.GetStart())
 		}
 
 		builder.add(e.Tags, sample{
