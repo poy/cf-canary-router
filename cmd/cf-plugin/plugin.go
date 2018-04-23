@@ -86,7 +86,7 @@ func (c cli) GetMetadata() plugin.PluginMetadata {
 				Name:     "canary-router",
 				HelpText: "Pushes a canary router",
 				UsageDetails: plugin.Usage{
-					Usage: "canary-router",
+					Usage: "canary-router [OPTIONS]",
 					Options: map[string]string{
 						"path":                "Path to the canary-router app to push (defaults to downloading release from github)",
 						"name":                "Name for the canary router (defaults to 'canary-router')",
