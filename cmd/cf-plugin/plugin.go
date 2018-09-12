@@ -25,10 +25,11 @@ func (c cli) Run(conn plugin.CliConnection, args []string) {
 
 	logger := newLogger(os.Stderr)
 
-	httpClient := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-	downloader := command.NewGithubReleaseDownloader("apoydence/cf-canary-router", httpClient, logger)
+	downloader := command.NewGithubReleaseDownloader(
+		"apoydence/cf-canary-router",
+		http.DefaultClient,
+		logger,
+	)
 
 	switch args[0] {
 	case "canary-router":

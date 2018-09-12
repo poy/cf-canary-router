@@ -83,6 +83,8 @@ func (d GithubReleaseDownloader) getReleases() githubReleases {
 }
 
 func (d GithubReleaseDownloader) downloadAsset(assetName, URL, p string) {
+	d.log.Printf("downloading asset from %s...", URL)
+
 	req, err := http.NewRequest(http.MethodGet, URL, nil)
 	if err != nil {
 		d.log.Fatalf("failed to create request to github: %s", err)
