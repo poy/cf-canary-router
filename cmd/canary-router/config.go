@@ -9,19 +9,19 @@ import (
 )
 
 type Config struct {
-	Port         int    `env:"PORT, required"`
-	CurrentRoute string `env:"CURRENT_ROUTE, required"`
-	CanaryRoute  string `env:"CANARY_ROUTE, required"`
-	LogCacheAddr string `env:"LOG_CACHE_ADDR, required"`
+	Port         int    `env:"PORT, required, report"`
+	CurrentRoute string `env:"CURRENT_ROUTE, required, report"`
+	CanaryRoute  string `env:"CANARY_ROUTE, required, report"`
+	LogCacheAddr string `env:"LOG_CACHE_ADDR, required, report"`
 
-	UaaAddr         string `env:"UAA_ADDR, required"`
-	UaaUser         string `env:"UAA_USER, required"`
-	UaaPassword     string `env:"UAA_PASSWORD, required, noreport"`
-	UaaClient       string `env:"UAA_CLIENT, required"`
-	UaaClientSecret string `env:"UAA_CLIENT_SECRET, noreport"`
+	UaaAddr         string `env:"UAA_ADDR, required, report"`
+	UaaUser         string `env:"UAA_USER, required, report"`
+	UaaPassword     string `env:"UAA_PASSWORD, required"`
+	UaaClient       string `env:"UAA_CLIENT, required, report"`
+	UaaClientSecret string `env:"UAA_CLIENT_SECRET"`
 
-	Query string `env:"QUERY, required"`
-	Plan  Plan   `env:"PLAN, required"`
+	Query string `env:"QUERY, required, report"`
+	Plan  Plan   `env:"PLAN, required, report"`
 
 	SkipSSLValidation bool `env:"SKIP_SSL_VALIDATION"`
 }
@@ -31,6 +31,8 @@ func loadConfig() Config {
 	if err := envstruct.Load(&cfg); err != nil {
 		log.Fatal(err)
 	}
+
+	envstruct.WriteReport(&cfg)
 
 	return cfg
 }

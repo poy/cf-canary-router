@@ -85,8 +85,9 @@ func PushCanaryRouter(
 		log.Fatalf("%s does not have a route", *currentApp)
 	}
 
+	tempRoute := "canary-router-temp"
 	currentR := currentM.Routes[0]
-	currentRoute := fmt.Sprintf("https://%s.%s%s", currentR.Host, currentR.Domain.Name, currentR.Path)
+	currentRoute := fmt.Sprintf("https://%s.%s%s", tempRoute, currentR.Domain.Name, currentR.Path)
 
 	if !*force {
 		log.Print(
@@ -129,7 +130,7 @@ func PushCanaryRouter(
 		)
 	}()
 
-	// Map the current app to a temp route
+	// Map the canary app to the current route
 	_, err = cli.CliCommandWithoutTerminalOutput(
 		"map-route", *name,
 		currentR.Domain.Name,
@@ -140,11 +141,11 @@ func PushCanaryRouter(
 		log.Fatalf("%s", err)
 	}
 
-	// Map the canary app to the current route
+	// Map the current app to a temp route
 	_, err = cli.CliCommandWithoutTerminalOutput(
 		"map-route", *currentApp,
 		currentR.Domain.Name,
-		"--hostname", "canary-router-temp",
+		"--hostname", tempRoute,
 		"--path", currentR.Path,
 	)
 	if err != nil {
@@ -155,7 +156,7 @@ func PushCanaryRouter(
 		_, err = cli.CliCommandWithoutTerminalOutput(
 			"unmap-route", *currentApp,
 			currentR.Domain.Name,
-			"--hostname", "canary-router-temp",
+			"--hostname", tempRoute,
 			"--path", currentR.Path,
 		)
 		if err != nil {
