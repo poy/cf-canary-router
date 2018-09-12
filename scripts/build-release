@@ -1,0 +1,32 @@
+#!/bin/bash
+
+set -e
+
+# Assert versions are set
+[ -z "$MAJOR_VERSION" ] && echo "MAJOR_VERSION is required" && exit 1
+[ -z "$MINOR_VERSION" ] && echo "MINOR_VERSION is required" && exit 1
+version="{\"Major\":$MAJOR_VERSION,\"Minor\":$MINOR_VERSION}"
+
+# Use temp dir if one wasn't provided
+[ -z "$OUTPUT" ] && OUTPUT=$(mktemp -d)
+
+echo "Output dir: $OUTPUT"
+echo "Version: $version"
+
+# Plugin
+pushd $GOPATH/src/github.com/apoydence/cf-canary-router/cmd/cf-plugin/
+  GOOS=linux go get ./...
+  GOOS=linux go build -ldflags "-X main.version=$version" -o $OUTPUT/cf-plugin-linux
+
+  GOOS=darwin go get ./...
+  GOOS=darwin go build -ldflags "-X main.version=$version" -o $OUTPUT/cf-plugin-darwin
+
+  GOOS=windows go get ./...
+  GOOS=windows go build -ldflags "-X main.version=$version" -o $OUTPUT/cf-plugin-windows
+popd
+
+# Canary Router
+pushd $GOPATH/src/github.com/apoydence/cf-canary-router/cmd/canary-router/
+  GOOS=linux go get ./...
+  GOOS=linux go build -o $OUTPUT/canary-router
+popd
