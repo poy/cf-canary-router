@@ -38,7 +38,7 @@ func main() {
 				cfg.UaaAddr,
 				cfg.UaaClient,
 				cfg.UaaClientSecret,
-				logcache.WithUser(cfg.UaaUser, cfg.UaaPassword),
+				logcache.WithOauth2HTTPUser(cfg.UaaUser, cfg.UaaPassword),
 				logcache.WithOauth2HTTPClient(httpClient),
 			),
 		),
