@@ -18,8 +18,8 @@ import (
 	"code.cloudfoundry.org/cli/plugin"
 	logcache "code.cloudfoundry.org/go-log-cache"
 	"code.cloudfoundry.org/go-loggregator/rpc/loggregator_v2"
-	"github.com/apoydence/cf-canary-router/internal/proxy"
-	"github.com/apoydence/cf-canary-router/internal/structuredlogs"
+	"github.com/poy/cf-canary-router/internal/proxy"
+	"github.com/poy/cf-canary-router/internal/structuredlogs"
 )
 
 type Downloader interface {
@@ -92,7 +92,7 @@ func PushCanaryRouter(
 	if !*force {
 		log.Print(
 			"The canary router functionality is an experimental feature. ",
-			"See https://github.com/apoydence/cf-canary-router for more details.\n",
+			"See https://github.com/poy/cf-canary-router for more details.\n",
 			"Do you wish to proceed? [y/N] ",
 		)
 

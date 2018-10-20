@@ -13,7 +13,7 @@ import (
 
 	"code.cloudfoundry.org/cli/plugin"
 	logcache "code.cloudfoundry.org/go-log-cache"
-	"github.com/apoydence/cf-canary-router/internal/command"
+	"github.com/poy/cf-canary-router/internal/command"
 )
 
 type cli struct{}
@@ -26,7 +26,7 @@ func (c cli) Run(conn plugin.CliConnection, args []string) {
 	logger := newLogger(os.Stderr)
 
 	downloader := command.NewGithubReleaseDownloader(
-		"apoydence/cf-canary-router",
+		"poy/cf-canary-router",
 		http.DefaultClient,
 		logger,
 	)

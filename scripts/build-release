@@ -14,7 +14,7 @@ echo "Output dir: $OUTPUT"
 echo "Version: $version"
 
 # Plugin
-pushd $GOPATH/src/github.com/apoydence/cf-canary-router/cmd/cf-plugin/
+pushd $GOPATH/src/github.com/poy/cf-canary-router/cmd/cf-plugin/
   GOOS=linux go get ./...
   GOOS=linux go build -ldflags "-X main.version=$version" -o $OUTPUT/cf-plugin-linux
 
@@ -26,7 +26,7 @@ pushd $GOPATH/src/github.com/apoydence/cf-canary-router/cmd/cf-plugin/
 popd
 
 # Canary Router
-pushd $GOPATH/src/github.com/apoydence/cf-canary-router/cmd/canary-router/
+pushd $GOPATH/src/github.com/poy/cf-canary-router/cmd/canary-router/
   GOOS=linux go get ./...
   GOOS=linux go build -o $OUTPUT/canary-router
 popd

@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/apoydence/cf-canary-router/internal/structuredlogs"
-	"github.com/apoydence/onpar"
-	. "github.com/apoydence/onpar/expect"
-	. "github.com/apoydence/onpar/matchers"
+	"github.com/poy/cf-canary-router/internal/structuredlogs"
+	"github.com/poy/onpar"
+	. "github.com/poy/onpar/expect"
+	. "github.com/poy/onpar/matchers"
 )
 
 type TE struct {

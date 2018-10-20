@@ -7,7 +7,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/apoydence/cf-canary-router/internal/structuredlogs"
+	"github.com/poy/cf-canary-router/internal/structuredlogs"
 )
 
 type RoutePlanner struct {
